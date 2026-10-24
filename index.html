@@ -94,6 +94,14 @@
   @keyframes alarmFlash{0%,100%{opacity:0}50%{opacity:1}}
   .toast{position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:11;background:#3a0a0a;border:1px solid #ff4d4d;color:#ffd6d6;padding:10px 16px;border-radius:12px;max-width:88vw;font-size:13px;text-align:center}
   .ai-out{min-height:56px;line-height:1.55;font-size:14px} .ai-out ul{padding-left:20px;margin:6px 0} .ai-out h4{color:var(--honey);margin:12px 0 4px} .ai-out p{margin:6px 0}
+  .ai-out ol{padding-left:22px;margin:6px 0} .ai-out li{margin:3px 0} .ai-out h3,.ai-out h5,.ai-out h6{color:var(--honey);margin:14px 0 4px}
+  .ai-out a{color:var(--honey)} .ai-out hr{border:0;border-top:1px solid rgba(255,184,0,.25);margin:12px 0}
+  .ai-out code{background:rgba(255,184,0,.12);padding:1px 5px;border-radius:4px;font-size:.92em}
+  .ai-out pre{background:#120c02;border:1px solid #5a4210;border-radius:8px;padding:10px;overflow:auto;font-size:12px} .ai-out pre code{background:none;padding:0}
+  .ai-out blockquote{border-left:3px solid var(--honey);margin:8px 0;padding:2px 12px;color:var(--muted)}
+  .ai-out .tbl{overflow-x:auto;margin:8px 0} .ai-out table{border-collapse:collapse;font-size:13px;min-width:100%}
+  .ai-out th,.ai-out td{border:1px solid rgba(255,184,0,.25);padding:6px 10px;text-align:left} .ai-out th{background:rgba(255,184,0,.12);color:var(--honey)}
+  .cursor{color:var(--honey);animation:pulse 1s infinite}
   .ai-out.err{color:var(--danger)} .ai-out.think{color:var(--muted);animation:pulse 1.4s infinite}
   .aq{color:var(--muted);font-size:12px;border-left:3px solid var(--honey);padding-left:8px;margin-bottom:8px}
   .ai-row{margin-top:10px} .ai-ask{display:flex;gap:8px;margin-top:10px}
@@ -419,10 +427,10 @@ function pulseRing() { const r = document.createElement('div'); r.className = 'p
 // ---------- AI analyst (Groq) ----------
 let aiChat = [], aiBusy = false;
 const AI_SYSTEM = 'You are the Hive Analyst for "Surf Hive-Mind": a system where an Android agent (agent.py) performs UI tasks on phones, an Android app sends each step to a Flask backend (app.py /feedback) which stores it in Supabase table sandbox_events, and data_backup.py archives it to Hugging Face parquet files. The goal is 10,000,000,000 events. '
-  + 'You get a live JSON snapshot of the data. Be concrete and brief: cite real numbers from the snapshot, rank suggestions by impact, and say plainly when a sample is too small to conclude anything. '
-  + 'Note any missing columns (e.g. failure_reason, used_vision) and what adding them would unlock. Do not invent data that is not in the snapshot. Use short bullets and **bold** for key points. Keep answers under 250 words unless asked for more.';
+  + 'You get a live JSON snapshot of the data. Be concrete: cite real numbers from the snapshot, rank suggestions by impact, and say plainly when a sample is too small to conclude anything. '
+  + 'Note any missing columns (e.g. failure_reason, used_vision) and what adding them would unlock. Do not invent data that is not in the snapshot. Be thorough and well organized: use markdown (headings, bullet lists, tables, code blocks, **bold**) where it helps, and always finish your complete answer.';
 
-async function askGroq(question) {
+async function askGroq(question, onDelta) {
   if (!creds || !creds.groq) throw new Error('No GROQ_KEY found in your .env');
   if (!creds.groqModel) throw new Error('No GROQ_MODEL found in your .env');
   if (!window.snap) throw new Error('Data is still loading, try again in a moment');
@@ -431,36 +439,119 @@ async function askGroq(question) {
   const msgs = [{ role: 'system', content: AI_SYSTEM + '\n\nLIVE DATA SNAPSHOT:\n' + ctx }, ...aiChat.slice(-6), { role: 'user', content: question }];
   const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + creds.groq },
-    body: JSON.stringify({ model: creds.groqModel, messages: msgs, temperature: 0.3, max_tokens: 900 })
+    body: JSON.stringify({ model: creds.groqModel, messages: msgs, temperature: 0.3, stream: true }) // no max_tokens: let the model answer in full
   });
   if (!res.ok) throw new Error('Groq ' + res.status + ': ' + (await res.text()).slice(0, 180));
-  const out = (await res.json()).choices?.[0]?.message?.content || '(empty reply)';
-  aiChat.push({ role: 'user', content: question }, { role: 'assistant', content: out });
-  return out;
+  const reader = res.body.getReader(), dec = new TextDecoder();
+  let buf = '', text = '', finish = null;
+  while (true) {
+    const { value, done } = await reader.read(); if (done) break;
+    buf += dec.decode(value, { stream: true });
+    const parts = buf.split('\n'); buf = parts.pop();
+    for (const ln of parts) {
+      if (!ln.startsWith('data:')) continue;
+      const d = ln.slice(5).trim(); if (!d || d === '[DONE]') continue;
+      try {
+        const c = JSON.parse(d).choices?.[0];
+        if (c?.delta?.content) { text += c.delta.content; onDelta && onDelta(c.delta.content); }
+        if (c?.finish_reason) finish = c.finish_reason;
+      } catch (e) {}
+    }
+  }
+  if (!text) text = '(empty reply)';
+  aiChat.push({ role: 'user', content: question }, { role: 'assistant', content: text });
+  return { text, finish };
 }
-function aiFmt(el, s) {
-  s.split(/(\*\*[^*]+\*\*)/).forEach(p => {
-    if (/^\*\*[^*]+\*\*$/.test(p)) { const b = document.createElement('b'); b.textContent = p.slice(2, -2); el.appendChild(b); }
-    else el.appendChild(document.createTextNode(p));
-  });
+// Safe markdown renderer: builds DOM nodes only (never injects model output as HTML)
+function mdInline(el, s) {
+  const re = /(`[^`]+`)|(\*\*[^*]+\*\*)|(__[^_]+__)|(\*[^*\s][^*]*\*)|(\[[^\]]+\]\(https?:\/\/[^\s)]+\))/g;
+  let last = 0, m;
+  while ((m = re.exec(s))) {
+    if (m.index > last) el.appendChild(document.createTextNode(s.slice(last, m.index)));
+    const t = m[0]; let n;
+    if (t[0] === '`') { n = document.createElement('code'); n.textContent = t.slice(1, -1); }
+    else if (t.startsWith('**') || t.startsWith('__')) { n = document.createElement('b'); mdInline(n, t.slice(2, -2)); }
+    else if (t[0] === '*') { n = document.createElement('i'); mdInline(n, t.slice(1, -1)); }
+    else { const mm = t.match(/^\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)$/); n = document.createElement('a'); n.href = mm[2]; n.target = '_blank'; n.rel = 'noopener noreferrer'; n.textContent = mm[1]; }
+    el.appendChild(n); last = m.index + t.length;
+  }
+  if (last < s.length) el.appendChild(document.createTextNode(s.slice(last)));
 }
-function renderAI(q, text) {
+function mdRender(box, text) {
+  const lines = text.replace(/\r/g, '').split('\n');
+  const LI = /^(\s*)([-*+]|\d+[.)])\s+(.*)/, SPECIAL = /^(#{1,6}\s|```|\s*([-*+]|\d+[.)])\s|>|\s*\|)/;
+  const cells = l => l.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(c => c.trim());
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    if (/^```/.test(line)) { // code fence
+      const buf = []; i++;
+      while (i < lines.length && !/^```/.test(lines[i])) buf.push(lines[i++]);
+      i++;
+      const pre = document.createElement('pre'), c = document.createElement('code'); c.textContent = buf.join('\n'); pre.appendChild(c); box.appendChild(pre); continue;
+    }
+    if (!line.trim()) { i++; continue; }
+    if (/^\s*([-*_])\s*\1\s*\1[\s\-*_]*$/.test(line)) { box.appendChild(document.createElement('hr')); i++; continue; }
+    const h = line.match(/^(#{1,6})\s+(.*)/);
+    if (h) { const e = document.createElement('h' + Math.min(6, h[1].length + 2)); mdInline(e, h[2]); box.appendChild(e); i++; continue; }
+    if (line.includes('|') && i + 1 < lines.length && /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(lines[i + 1])) { // table
+      const wrap = document.createElement('div'); wrap.className = 'tbl';
+      const tb = document.createElement('table'), th = tb.createTHead().insertRow();
+      cells(line).forEach(c => { const x = document.createElement('th'); mdInline(x, c); th.appendChild(x); });
+      const body = tb.createTBody(); i += 2;
+      while (i < lines.length && lines[i].trim() && lines[i].includes('|')) { const r = body.insertRow(); cells(lines[i]).forEach(c => mdInline(r.insertCell(), c)); i++; }
+      wrap.appendChild(tb); box.appendChild(wrap); continue;
+    }
+    if (/^>/.test(line)) { // blockquote
+      const buf = []; while (i < lines.length && /^>/.test(lines[i])) buf.push(lines[i++].replace(/^>\s?/, ''));
+      const bq = document.createElement('blockquote'); mdInline(bq, buf.join(' ')); box.appendChild(bq); continue;
+    }
+    if (LI.test(line)) { // lists (nested by indent)
+      const stack = [];
+      while (i < lines.length) {
+        if (!lines[i].trim()) { let j = i + 1; while (j < lines.length && !lines[j].trim()) j++; if (j < lines.length && LI.test(lines[j])) { i = j; continue; } break; }
+        const m = lines[i].match(LI); if (!m) break;
+        const indent = m[1].length, ordered = /\d/.test(m[2]);
+        while (stack.length && indent < stack[stack.length - 1].indent) stack.pop();
+        let top = stack[stack.length - 1];
+        if (!top || indent > top.indent) {
+          const list = document.createElement(ordered ? 'ol' : 'ul'); if (ordered) list.start = parseInt(m[2]) || 1;
+          if (top) (top.list.lastElementChild || top.list).appendChild(list); else box.appendChild(list);
+          top = { indent, list }; stack.push(top);
+        }
+        const li = document.createElement('li'); mdInline(li, m[3]); top.list.appendChild(li); i++;
+      }
+      continue;
+    }
+    const buf = [line.trim()]; i++; // paragraph
+    while (i < lines.length && lines[i].trim() && !SPECIAL.test(lines[i])) buf.push(lines[i++].trim());
+    const p = document.createElement('p'); mdInline(p, buf.join(' ')); box.appendChild(p);
+  }
+}
+function renderAI(q, text, streaming, finish) {
   const box = $('aiOut'); box.className = 'ai-out'; box.innerHTML = '';
   const aq = document.createElement('div'); aq.className = 'aq'; aq.textContent = q; box.appendChild(aq);
-  let ul = null;
-  text.split('\n').forEach(line => {
-    if (!line.trim()) { ul = null; return; }
-    const li = line.match(/^\s*[-*•]\s+(.*)/) || line.match(/^\s*\d+[.)]\s+(.*)/), h = line.match(/^#{1,4}\s+(.*)/);
-    if (li) { if (!ul) { ul = document.createElement('ul'); box.appendChild(ul); } const e = document.createElement('li'); aiFmt(e, li[1]); ul.appendChild(e); return; }
-    ul = null; const e = document.createElement(h ? 'h4' : 'p'); aiFmt(e, h ? h[1] : line.trim()); box.appendChild(e);
-  });
+  const body = document.createElement('div'); body.className = 'md'; box.appendChild(body);
+  mdRender(body, text);
+  if (streaming) { const c = document.createElement('span'); c.className = 'cursor'; c.textContent = '▍'; (body.lastElementChild || body).appendChild(c); }
+  if (finish === 'length') {
+    const n = document.createElement('div'); n.className = 'aq'; n.textContent = 'The model hit its length limit. ';
+    const b = document.createElement('button'); b.className = 'chip'; b.textContent = 'Continue ▸'; b.onclick = () => quickAsk('Continue exactly where you stopped.');
+    n.appendChild(b); box.appendChild(n);
+  }
 }
 async function quickAsk(q) {
   q = (q || '').trim(); if (!q || aiBusy) return;
   aiBusy = true; $('aiQ').value = '';
   const box = $('aiOut'); box.className = 'ai-out think'; box.textContent = '🐝 the hive is thinking…';
-  try { renderAI(q, await askGroq(q)); }
-  catch (e) { box.className = 'ai-out err'; box.textContent = '⚠ ' + e.message; }
+  let got = '', last = 0;
+  try {
+    const { text, finish } = await askGroq(q, d => { got += d; const now = performance.now(); if (now - last > 120) { last = now; renderAI(q, got, true); } });
+    renderAI(q, text, false, finish);
+  } catch (e) {
+    if (got) { renderAI(q, got, false); const n = document.createElement('div'); n.className = 'ai-out err'; n.textContent = '⚠ Stopped early: ' + e.message; $('aiOut').appendChild(n); }
+    else { box.className = 'ai-out err'; box.textContent = '⚠ ' + e.message; }
+  }
   aiBusy = false;
 }
 function runAnalysis() { quickAsk('Give a concise health analysis of the hive: the top 3 risks, what is working, and 5 prioritized suggestions with concrete numbers from the data.'); }
@@ -659,4 +750,3 @@ document.addEventListener('pointerdown', e => {
 </script>
 </body>
 </html>
-
