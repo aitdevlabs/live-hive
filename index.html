@@ -83,16 +83,28 @@
   .tap{position:fixed;z-index:5;width:16px;height:16px;border:2px solid var(--honey);border-radius:50%;pointer-events:none;transform:translate(-50%,-50%);animation:tap .7s ease-out forwards}
   @keyframes tap{to{transform:translate(-50%,-50%) scale(5);opacity:0}}
   .bump{animation:bump .5s} @keyframes bump{50%{transform:scale(1.12);filter:brightness(1.4)}}
-  #muteBtn{position:fixed;top:12px;right:12px;z-index:9;background:rgba(43,29,6,.9);border:1px solid var(--honey);color:var(--honey);border-radius:50%;width:38px;height:38px;font-size:17px;cursor:pointer}
+  .sw{position:fixed;top:12px;right:12px;z-index:9;display:flex;align-items:center;gap:8px;background:rgba(43,29,6,.92);border:1px solid var(--honey);border-radius:22px;padding:6px 12px 6px 8px;cursor:pointer;color:var(--muted);font-size:12px;user-select:none}
+  .sw input{display:none}
+  .sw .track{width:38px;height:20px;border-radius:12px;background:#2e2008;border:1px solid #5a4210;position:relative;transition:.25s}
+  .sw .track::after{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:var(--muted);transition:.25s}
+  .sw input:checked + .track{background:linear-gradient(90deg,var(--honey),var(--amber));border-color:var(--honey);box-shadow:0 0 10px rgba(255,184,0,.5)}
+  .sw input:checked + .track::after{left:20px;background:#1a1204}
+  .sw input:checked ~ .lbl{color:var(--honey)}
   body.alarm::after{content:"";position:fixed;inset:0;pointer-events:none;z-index:9;box-shadow:inset 0 0 140px 30px #ff1a1a;animation:alarmFlash .8s 4}
   @keyframes alarmFlash{0%,100%{opacity:0}50%{opacity:1}}
   .toast{position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:11;background:#3a0a0a;border:1px solid #ff4d4d;color:#ffd6d6;padding:10px 16px;border-radius:12px;max-width:88vw;font-size:13px;text-align:center}
+  .ai-out{min-height:56px;line-height:1.55;font-size:14px} .ai-out ul{padding-left:20px;margin:6px 0} .ai-out h4{color:var(--honey);margin:12px 0 4px} .ai-out p{margin:6px 0}
+  .ai-out.err{color:var(--danger)} .ai-out.think{color:var(--muted);animation:pulse 1.4s infinite}
+  .aq{color:var(--muted);font-size:12px;border-left:3px solid var(--honey);padding-left:8px;margin-bottom:8px}
+  .ai-row{margin-top:10px} .ai-ask{display:flex;gap:8px;margin-top:10px}
+  .ai-ask input{flex:1;min-width:0;padding:9px 12px;border-radius:10px;border:1px solid #5a4210;background:#120c02;color:var(--text)}
   @media(prefers-reduced-motion:reduce){ *{animation:none!important} }
 </style>
 </head>
 <body>
 <canvas id="bees"></canvas>
-<button id="muteBtn" title="Sound on/off" onclick="toggleSound()">🔊</button>
+<label class="sw" title="Hive sound"><input type="checkbox" id="soundToggle" onchange="setSound(this.checked)"><span class="track"></span><span class="lbl" id="soundLbl">Hive sound</span></label>
+<audio id="hiveAudio" src="hive.mp3" loop preload="auto"></audio>
 <div id="modal" onclick="if(event.target===this)closeModal()"><div class="mbox"><button class="x" onclick="closeModal()">✕</button><div id="modalBody"></div></div></div>
 <div class="container">
   <h1>🐝 Surf Hive-Mind</h1>
@@ -101,7 +113,7 @@
 
   <label class="drop" id="drop">
     <b>Drop your .env file here</b> or click to choose
-    <small>Reads SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, HF_TOKEN. Nothing is stored.</small>
+    <small>Reads SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, HF_TOKEN, GROQ_KEY and GROQ_MODEL. Keys are never stored.</small>
     <input type="file" id="envFile">
   </label>
 
@@ -146,6 +158,18 @@
       <div class="panel"><canvas id="appChart"></canvas></div>
       <div class="panel"><canvas id="actionChart"></canvas></div>
     </div>
+    <h2>🧠 Hive Analyst <small id="aiSub">powered by Groq</small></h2>
+    <div class="panel">
+      <div id="aiOut" class="ai-out">Tap <b>Analyze</b> for a read on the hive's health, risks and next moves.</div>
+      <div class="ai-row">
+        <button class="chip" onclick="runAnalysis()">✨ Analyze the hive</button>
+        <button class="chip" onclick="quickAsk('Why are the failing apps failing, and what should I fix first?')">Why failures?</button>
+        <button class="chip" onclick="quickAsk('What is the fastest realistic way to speed up event collection toward 10B?')">Speed up 10B</button>
+        <button class="chip" onclick="quickAsk('Which columns should I add to agent.py and app.py logging to get better insights?')">Better logging</button>
+      </div>
+      <div class="ai-ask"><input id="aiQ" placeholder="Ask anything about your data…" onkeydown="if(event.key==='Enter')quickAsk(this.value)"><button class="chip" style="margin:0" onclick="quickAsk($('aiQ').value)">Ask</button></div>
+    </div>
+
     <h2>Daily Pace <small id="paceSub">measuring…</small></h2>
     <div class="panel"><canvas id="dayChart"></canvas></div>
     <div id="schema"></div>
@@ -181,9 +205,12 @@ async function loadEnv(file) {
   const url = pickEnv(env, [/^SUPABASE_URL$/i, /SUPABASE.*URL/i]).replace(/\/+$/, '');
   const key = pickEnv(env, [/SERVICE_ROLE/i, /SUPABASE.*KEY/i]);
   const hf = pickEnv(env, [/^HF_TOKEN$/i, /HF.*TOKEN/i, /HUGGING/i]);
+  const groqModel = pickEnv(env, [/^GROQ_MODEL$/i, /GROQ.*MODEL/i]);
+  const groq = pickEnv(env, [/^GROQ_KEY$/i, /GROQ.*(KEY|API)/i]);
   const missing = [!url && 'SUPABASE_URL', !key && 'SUPABASE_SERVICE_ROLE_KEY', !hf && 'HF_TOKEN'].filter(Boolean);
   if (missing.length) return setStatus('Missing in .env: ' + missing.join(', '), 'error');
-  creds = { url, key, hf };
+  creds = { url, key, hf, groq, groqModel };
+  $('aiSub').textContent = !groq ? 'add GROQ_KEY to your .env to enable' : !groqModel ? 'add GROQ_MODEL to your .env to enable' : 'powered by Groq · ' + groqModel;
   drop.style.display = 'none'; $('app').style.display = 'block';
   await tick();
   feedTick(); clearInterval(feedTimer); feedTimer = setInterval(feedTick, 5000);
@@ -351,6 +378,17 @@ function render(live, archived, rows) {
 
   const m = Object.entries(A.K).map(([k,v]) => k + ':' + (v || '✗')).join('  ');
   $('schema').textContent = 'Detected columns → ' + m;
+  window.snap = {
+    totalEvents: total, liveInSupabase: live, archivedOnHF: archived, progressToGoalPct: +progress.toFixed(8),
+    ingestionPerSec: A.rate, timeToTenBillion: A.rate > 0 ? fmtDur((GOAL - total) / A.rate) : 'unknown',
+    bytesPerEvent: Math.round(bpe), projectedSizeAt10B: fmtBytes(bpe * GOAL),
+    sampleSize: A.n, overallSuccessPct: A.overall == null ? null : +A.overall.toFixed(1),
+    visionRatePct: A.vision, avgStepsPerTask: A.avgSteps,
+    columnsNotFound: Object.entries(A.K).filter(([, v]) => !v).map(([k]) => k),
+    appsBelow50pct: A.kill.slice(0, 10).map(k => ({ app: k.name, successPct: +k.pct.toFixed(1), events: k.n })),
+    topApps: Object.entries(A.apps).sort((a, b) => b[1].total - a[1].total).slice(0, 12).map(([n, v]) => ({ app: n, events: v.total, successPct: +(v.ok / v.total * 100).toFixed(1) })),
+    actionCounts: A.actions, failureReasons: A.reasons
+  };
 }
 
 function draw(id, type, labels, data, color, title) {
@@ -378,18 +416,69 @@ function setStatus(msg, cls) { if (msg) $('statusText').textContent = msg; $('st
 function paintStatus() { if (!lastOk) return; const ago = Math.round((Date.now() - lastOk) / 1000); $('statusText').textContent = 'LIVE · updated ' + ago + 's ago · next sync in ' + countdown + 's · 🐝 ' + (window.beeN || 3) + ' bees' + (hfCache.metaOk === false ? ' · archive _meta.json unreachable' : ''); $('statusText').className = 'success'; }
 function pulseRing() { const r = document.createElement('div'); r.className = 'pulse-ring'; document.body.appendChild(r); setTimeout(() => r.remove(), 1500); countdown = REFRESH; paintStatus(); }
 
+// ---------- AI analyst (Groq) ----------
+let aiChat = [], aiBusy = false;
+const AI_SYSTEM = 'You are the Hive Analyst for "Surf Hive-Mind": a system where an Android agent (agent.py) performs UI tasks on phones, an Android app sends each step to a Flask backend (app.py /feedback) which stores it in Supabase table sandbox_events, and data_backup.py archives it to Hugging Face parquet files. The goal is 10,000,000,000 events. '
+  + 'You get a live JSON snapshot of the data. Be concrete and brief: cite real numbers from the snapshot, rank suggestions by impact, and say plainly when a sample is too small to conclude anything. '
+  + 'Note any missing columns (e.g. failure_reason, used_vision) and what adding them would unlock. Do not invent data that is not in the snapshot. Use short bullets and **bold** for key points. Keep answers under 250 words unless asked for more.';
+
+async function askGroq(question) {
+  if (!creds || !creds.groq) throw new Error('No GROQ_KEY found in your .env');
+  if (!creds.groqModel) throw new Error('No GROQ_MODEL found in your .env');
+  if (!window.snap) throw new Error('Data is still loading, try again in a moment');
+  const recent = feedRows.slice(0, 25).map(r => ({ action: r.action, app: r.app_package, step: r.step, ok: !!r.success, verify: r.verify_method, treeNodes: r.tree_node_count, ago: ago(r.created_at) }));
+  const ctx = JSON.stringify({ ...window.snap, daily: window.daily || null, recentEvents: recent });
+  const msgs = [{ role: 'system', content: AI_SYSTEM + '\n\nLIVE DATA SNAPSHOT:\n' + ctx }, ...aiChat.slice(-6), { role: 'user', content: question }];
+  const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + creds.groq },
+    body: JSON.stringify({ model: creds.groqModel, messages: msgs, temperature: 0.3, max_tokens: 900 })
+  });
+  if (!res.ok) throw new Error('Groq ' + res.status + ': ' + (await res.text()).slice(0, 180));
+  const out = (await res.json()).choices?.[0]?.message?.content || '(empty reply)';
+  aiChat.push({ role: 'user', content: question }, { role: 'assistant', content: out });
+  return out;
+}
+function aiFmt(el, s) {
+  s.split(/(\*\*[^*]+\*\*)/).forEach(p => {
+    if (/^\*\*[^*]+\*\*$/.test(p)) { const b = document.createElement('b'); b.textContent = p.slice(2, -2); el.appendChild(b); }
+    else el.appendChild(document.createTextNode(p));
+  });
+}
+function renderAI(q, text) {
+  const box = $('aiOut'); box.className = 'ai-out'; box.innerHTML = '';
+  const aq = document.createElement('div'); aq.className = 'aq'; aq.textContent = q; box.appendChild(aq);
+  let ul = null;
+  text.split('\n').forEach(line => {
+    if (!line.trim()) { ul = null; return; }
+    const li = line.match(/^\s*[-*•]\s+(.*)/) || line.match(/^\s*\d+[.)]\s+(.*)/), h = line.match(/^#{1,4}\s+(.*)/);
+    if (li) { if (!ul) { ul = document.createElement('ul'); box.appendChild(ul); } const e = document.createElement('li'); aiFmt(e, li[1]); ul.appendChild(e); return; }
+    ul = null; const e = document.createElement(h ? 'h4' : 'p'); aiFmt(e, h ? h[1] : line.trim()); box.appendChild(e);
+  });
+}
+async function quickAsk(q) {
+  q = (q || '').trim(); if (!q || aiBusy) return;
+  aiBusy = true; $('aiQ').value = '';
+  const box = $('aiOut'); box.className = 'ai-out think'; box.textContent = '🐝 the hive is thinking…';
+  try { renderAI(q, await askGroq(q)); }
+  catch (e) { box.className = 'ai-out err'; box.textContent = '⚠ ' + e.message; }
+  aiBusy = false;
+}
+function runAnalysis() { quickAsk('Give a concise health analysis of the hive: the top 3 risks, what is working, and 5 prioritized suggestions with concrete numbers from the data.'); }
+
 // ---------- sound ----------
-let audioCtx = null, soundOn = true;
-try { soundOn = localStorage.getItem('hiveSound') !== 'off'; } catch (e) {}
+let audioCtx = null, soundOn = false;
+try { soundOn = localStorage.getItem('hiveSound') === 'on'; } catch (e) {}
 function ac() {
   if (!audioCtx) { try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {} }
   if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+  if (soundOn) { const h = $('hiveAudio'); if (h.paused) { h.volume = 0.5; h.play().catch(() => {}); } } // resume saved preference after first tap
   return audioCtx;
 }
-function toggleSound() {
-  soundOn = !soundOn; $('muteBtn').textContent = soundOn ? '🔊' : '🔇';
-  try { localStorage.setItem('hiveSound', soundOn ? 'on' : 'off'); } catch (e) {}
-  if (soundOn) { ac(); sound('ok'); }
+function setSound(on) {
+  soundOn = on; $('soundToggle').checked = on;
+  try { localStorage.setItem('hiveSound', on ? 'on' : 'off'); } catch (e) {}
+  const a = $('hiveAudio');
+  if (on) { a.volume = 0.5; a.play().catch(() => {}); ac(); } else a.pause();
 }
 function sound(kind) {
   if (!soundOn) return;
@@ -415,7 +504,8 @@ function sound(kind) {
     });
   }
 }
-$('muteBtn').textContent = soundOn ? '🔊' : '🔇';
+$('soundToggle').checked = soundOn;
+$('hiveAudio').addEventListener('error', () => { $('soundLbl').textContent = 'hive.mp3 not found'; });
 
 // ---------- alerts ----------
 let prevKill = null;
@@ -453,6 +543,7 @@ async function dailyTick() {
       options: { responsive: true, plugins: { title: { display: true, text: 'Supabase events per day (last 14 days)', color: '#fff3d6' }, legend: { labels: { color: '#fff3d6' } } },
         scales: { x: { ticks: tick, grid: { display: false } }, y: { ticks: tick, grid: { color: '#3b2a0c' }, beginAtZero: true } } } };
     if (charts.dayChart) { charts.dayChart.data = cfg.data; charts.dayChart.update(); } else charts.dayChart = new Chart($('dayChart'), cfg);
+    window.daily = { days: labels, eventsPerDay: counts, avg7Day: Math.round(avg) };
     const need = (GOAL - (window.lastTotal || 0)) / 365;
     $('paceSub').textContent = fmtInt(avg) + '/day (7d avg) · 10B in 1 year needs ' + fmtInt(need) + '/day' + (avg > 0 ? ' · ' + (need / avg).toFixed(0) + '× faster' : '');
   } catch (e) {}
@@ -531,7 +622,7 @@ document.addEventListener('keydown', e => e.key === 'Escape' && closeModal());
 // tap anywhere: ripple + bees swarm to the tap
 document.addEventListener('pointerdown', e => {
   ac();
-  if (e.target.closest('#modal,.drop,#muteBtn')) return;
+  if (e.target.closest('#modal,.drop,.sw')) return;
   window.beeAttract = { x: e.clientX, y: e.clientY, until: performance.now() + 1500, c: '255,184,0' };
   const r = document.createElement('div'); r.className = 'tap'; r.style.left = e.clientX + 'px'; r.style.top = e.clientY + 'px'; document.body.appendChild(r); setTimeout(() => r.remove(), 800);
 });
