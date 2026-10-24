@@ -1,0 +1,571 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Surf Hive-Mind Live</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+  :root { --honey:#ffb800; --amber:#ff8a00; --comb:#1a1204; --text:#fff3d6; --muted:#c9a45a; --danger:#ff4d4d; }
+  * { box-sizing:border-box; }
+  body { margin:0; padding:18px; color:var(--text); min-height:100vh; background-color:#120c02;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='100' viewBox='0 0 56 100'%3E%3Cpath d='M28 66L0 50V16L28 0l28 16v34zM28 100L0 84V66l28-16 28 16v18z' fill='none' stroke='%23ffb800' stroke-opacity='0.13' stroke-width='2'/%3E%3C/svg%3E"); }
+  #bees { position:fixed; inset:0; width:100%; height:100%; pointer-events:none; z-index:2; }
+  .container { position:relative; z-index:1; max-width:1200px; margin:0 auto; }
+  h1 { text-align:center; color:var(--honey); margin:8px 0 2px; text-shadow:0 0 18px rgba(255,184,0,.45); }
+  .subtitle { text-align:center; color:var(--muted); margin:0 0 8px; }
+  #status { text-align:center; color:var(--muted); margin-bottom:14px; font-size:14px; }
+  .error { color:var(--danger)!important; } .success { color:#ffd45e!important; }
+  .live { display:inline-block; width:9px; height:9px; border-radius:50%; background:#3dff8a; margin-right:6px; box-shadow:0 0 8px #3dff8a; animation:beat 1.2s infinite; }
+  .live.off { background:#777; box-shadow:none; animation:none; }
+  @keyframes beat { 0%,100%{transform:scale(1);opacity:1} 50%{transform:scale(1.7);opacity:.5} }
+
+  .drop { max-width:520px; margin:0 auto 24px; padding:30px 20px; text-align:center; cursor:pointer; display:block;
+    background:rgba(43,29,6,.85); border:2px dashed var(--honey); border-radius:16px; transition:.2s; }
+  .drop:hover,.drop.over { background:rgba(255,184,0,.12); box-shadow:0 0 24px rgba(255,184,0,.3); }
+  .drop b { color:var(--honey); } .drop small { display:block; color:var(--muted); margin-top:8px; } .drop input { display:none; }
+
+  h2 { color:var(--honey); font-size:16px; letter-spacing:1px; text-transform:uppercase; margin:30px 0 12px; }
+  h2 small { color:var(--muted); text-transform:none; letter-spacing:0; font-weight:400; margin-left:8px; }
+
+  .metrics { display:flex; flex-wrap:wrap; justify-content:center; gap:0 6px; }
+  .hex { width:200px; height:230px; margin:0 3px; padding:4px; position:relative;
+    clip-path:polygon(50% 0,100% 25%,100% 75%,50% 100%,0 75%,0 25%); background:linear-gradient(145deg,var(--honey),var(--amber)); transition:transform .3s; }
+  .hex:hover { transform:scale(1.04); }
+  .hex.bad { background:linear-gradient(145deg,#ff4d4d,#a30000); }
+  .hex-inner { width:100%; height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:0 22px;
+    clip-path:polygon(50% 0,100% 25%,100% 75%,50% 100%,0 75%,0 25%); background:radial-gradient(circle at 50% 30%,#3b280a,var(--comb)); }
+  .hex h3 { margin:0; font-size:11px; letter-spacing:1.4px; text-transform:uppercase; color:var(--muted); }
+  .hex p { margin:8px 0 0; font-size:22px; font-weight:800; word-break:break-word; }
+  .hex small { color:var(--muted); font-size:11px; margin-top:4px; }
+  .hex.goal p { color:var(--honey); }
+
+  .panel { background:rgba(43,29,6,.88); border:1px solid rgba(255,184,0,.35); border-radius:16px; padding:18px; }
+  .panel-head { display:flex; justify-content:space-between; color:var(--muted); font-size:13px; margin-bottom:10px; }
+  .comb { display:flex; flex-direction:column; align-items:center; }
+  .comb-row { display:flex; margin-top:-7px; } .comb-row.off { margin-left:22px; }
+  .cell { width:44px; height:50px; margin:0 1px; background:#2e2008; clip-path:polygon(50% 0,100% 25%,100% 75%,50% 100%,0 75%,0 25%); transition:background .6s; }
+  .cell.full { background:linear-gradient(145deg,var(--honey),var(--amber)); box-shadow:0 0 12px var(--honey); }
+  .cell.pulse { background:var(--honey); animation:pulse 1.4s infinite; }
+  @keyframes pulse { 50%{opacity:.3} }
+
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:18px; }
+  .kill-row { display:grid; grid-template-columns:minmax(90px,1.2fr) 2fr 52px 44px; gap:8px; align-items:center; padding:7px 0; border-bottom:1px solid rgba(255,77,77,.18); font-size:13px; }
+  .kill-row .name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .bar { height:10px; background:#2a0d0d; border-radius:6px; overflow:hidden; } .bar i { display:block; height:100%; background:linear-gradient(90deg,#a30000,#ff4d4d); animation:throb 1.6s infinite; }
+  @keyframes throb { 50%{filter:brightness(1.6)} }
+  .kill-row .pct { color:var(--danger); font-weight:700; text-align:right; } .kill-row .n { color:var(--muted); text-align:right; font-size:11px; }
+  .danger-panel { border-color:rgba(255,77,77,.55); box-shadow:0 0 22px rgba(255,77,77,.12); }
+  .empty { color:var(--muted); padding:10px 0; }
+  #schema { margin-top:26px; text-align:center; color:#7d6530; font-size:11px; }
+  .pulse-ring { position:fixed; left:50%; top:50%; width:20px; height:20px; border:3px solid var(--honey); border-radius:50%; pointer-events:none; z-index:0; animation:ring 1.4s ease-out forwards; }
+  @keyframes ring { to { transform:translate(-50%,-50%) scale(60); opacity:0; } }
+  @media(max-width:760px){ .grid2{grid-template-columns:1fr} .cell{width:30px;height:34px} .comb-row.off{margin-left:15px} }
+  #feed{max-height:340px;overflow:auto}
+  .ev{display:grid;grid-template-columns:14px 1.2fr 1.6fr .8fr 36px;gap:8px;align-items:center;padding:8px 6px;border-bottom:1px solid rgba(255,184,0,.12);font-size:13px;cursor:pointer;border-radius:8px}
+  .ev:hover{background:rgba(255,184,0,.1)}
+  .ev i{width:10px;height:10px;border-radius:50%}
+  .ev.ok i{background:#3dff8a;box-shadow:0 0 6px #3dff8a} .ev.bad i{background:#ff4d4d;box-shadow:0 0 6px #ff4d4d}
+  .ev span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap} .ev .p,.ev .s,.ev .t{color:var(--muted);font-size:11px}
+  .ev.new{animation:evIn .9s ease-out}
+  @keyframes evIn{0%{transform:translateX(-30px);opacity:0;background:rgba(255,184,0,.5)}100%{transform:none;opacity:1;background:transparent}}
+  .chip{background:rgba(255,184,0,.15);border:1px solid var(--honey);color:var(--honey);border-radius:20px;padding:4px 12px;font-size:12px;cursor:pointer;margin:6px 4px 0 0}
+  .kill-row{cursor:pointer} .kill-row:hover{background:rgba(255,77,77,.08)}
+  #modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:10;align-items:center;justify-content:center;padding:16px}
+  .mbox{background:#241806;border:1px solid var(--honey);border-radius:16px;padding:18px;max-width:520px;width:100%;max-height:85vh;overflow:auto;position:relative}
+  .mbox h3{margin:0 0 10px;color:var(--honey)} .mbox .x{position:absolute;top:8px;right:10px;background:none;border:0;color:var(--muted);font-size:20px;cursor:pointer}
+  .mbox table{width:100%;font-size:12px;border-collapse:collapse} .mbox td{padding:4px 6px;border-bottom:1px solid rgba(255,184,0,.12);word-break:break-all} .mbox td:first-child{color:var(--muted);width:38%}
+  .sess{margin-top:12px} .pill{display:inline-block;margin:4px 4px 0 0;padding:3px 9px;border-radius:12px;font-size:11px;cursor:pointer;border:1px solid}
+  .pill.ok{border-color:#3dff8a;color:#3dff8a} .pill.bad{border-color:#ff4d4d;color:#ff4d4d}
+  .spark{position:fixed;z-index:5;font-weight:800;pointer-events:none;animation:spark 1.3s ease-out forwards}
+  @keyframes spark{to{transform:translateY(-60px);opacity:0}}
+  .tap{position:fixed;z-index:5;width:16px;height:16px;border:2px solid var(--honey);border-radius:50%;pointer-events:none;transform:translate(-50%,-50%);animation:tap .7s ease-out forwards}
+  @keyframes tap{to{transform:translate(-50%,-50%) scale(5);opacity:0}}
+  .bump{animation:bump .5s} @keyframes bump{50%{transform:scale(1.12);filter:brightness(1.4)}}
+  #muteBtn{position:fixed;top:12px;right:12px;z-index:9;background:rgba(43,29,6,.9);border:1px solid var(--honey);color:var(--honey);border-radius:50%;width:38px;height:38px;font-size:17px;cursor:pointer}
+  body.alarm::after{content:"";position:fixed;inset:0;pointer-events:none;z-index:9;box-shadow:inset 0 0 140px 30px #ff1a1a;animation:alarmFlash .8s 4}
+  @keyframes alarmFlash{0%,100%{opacity:0}50%{opacity:1}}
+  .toast{position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:11;background:#3a0a0a;border:1px solid #ff4d4d;color:#ffd6d6;padding:10px 16px;border-radius:12px;max-width:88vw;font-size:13px;text-align:center}
+  @media(prefers-reduced-motion:reduce){ *{animation:none!important} }
+</style>
+</head>
+<body>
+<canvas id="bees"></canvas>
+<button id="muteBtn" title="Sound on/off" onclick="toggleSound()">🔊</button>
+<div id="modal" onclick="if(event.target===this)closeModal()"><div class="mbox"><button class="x" onclick="closeModal()">✕</button><div id="modalBody"></div></div></div>
+<div class="container">
+  <h1>🐝 Surf Hive-Mind</h1>
+  <p class="subtitle">Target: 10,000,000,000 Events</p>
+  <div id="status"><span class="live off" id="liveDot"></span><span id="statusText">Drop your .env file to connect.</span></div>
+
+  <label class="drop" id="drop">
+    <b>Drop your .env file here</b> or click to choose
+    <small>Reads SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, HF_TOKEN. Nothing is stored.</small>
+    <input type="file" id="envFile">
+  </label>
+
+  <div id="app" style="display:none">
+    <h2>The Hive</h2>
+    <div class="metrics">
+      <div class="hex"><div class="hex-inner"><h3>Total Events</h3><p id="totalCount">0</p></div></div>
+      <div class="hex"><div class="hex-inner"><h3>Live (Supabase)</h3><p id="liveCount">0</p></div></div>
+      <div class="hex"><div class="hex-inner"><h3>Archived (HF)</h3><p id="archiveCount">0</p></div></div>
+      <div class="hex goal"><div class="hex-inner"><h3>Progress to 10B</h3><p id="goalProgress">0%</p></div></div>
+    </div>
+
+    <h2>The 10B Horizon</h2>
+    <div class="metrics">
+      <div class="hex"><div class="hex-inner"><h3>Ingestion Rate</h3><p id="rate">–</p><small id="rateSub"></small></div></div>
+      <div class="hex goal"><div class="hex-inner"><h3>Time to 10B</h3><p id="eta">–</p><small id="etaSub"></small></div></div>
+      <div class="hex"><div class="hex-inner"><h3>10B Data Size</h3><p id="size10b">–</p><small id="sizeSub"></small></div></div>
+    </div>
+    <div class="panel" style="margin-top:18px">
+      <div class="panel-head"><span>0 Events</span><span>10,000,000,000 Events</span></div>
+      <div class="comb" id="comb"></div>
+    </div>
+
+    <h2>Live Feed <small>tap an event for details · bees swarm to new ones</small></h2>
+    <div class="panel" id="feedPanel"><div id="feedFilter"></div><div id="feed"><div class="empty">Waiting for events…</div></div></div>
+
+    <h2>Agent Loop Health</h2>
+    <div class="metrics">
+      <div class="hex"><div class="hex-inner"><h3>Vision Trigger Rate</h3><p id="vision">–</p><small id="visionSub"></small></div></div>
+      <div class="hex"><div class="hex-inner"><h3>Avg Steps / Task</h3><p id="steps">–</p><small id="stepsSub"></small></div></div>
+      <div class="hex" id="overallHex"><div class="hex-inner"><h3>Overall Success</h3><p id="overall">–</p><small id="overallSub"></small></div></div>
+    </div>
+
+    <div class="grid2" style="margin-top:18px">
+      <div class="panel danger-panel">
+        <div class="panel-head"><span>☠ KILL LIST: apps under 50% success</span><span id="killCount"></span></div>
+        <div id="killList"></div>
+      </div>
+      <div class="panel"><div class="panel-head"><span>Why the agent fails</span></div><canvas id="reasonChart"></canvas><div id="reasonEmpty" class="empty" style="display:none"></div></div>
+    </div>
+    <div class="grid2" style="margin-top:18px">
+      <div class="panel"><canvas id="appChart"></canvas></div>
+      <div class="panel"><canvas id="actionChart"></canvas></div>
+    </div>
+    <h2>Daily Pace <small id="paceSub">measuring…</small></h2>
+    <div class="panel"><canvas id="dayChart"></canvas></div>
+    <div id="schema"></div>
+  </div>
+</div>
+
+<script>
+const GOAL = 1e10, REFRESH = 15, MIN_SAMPLE = 3;
+const $ = id => document.getElementById(id);
+let creds = null, timer = null, countdown = REFRESH, lastOk = 0, history = [], tickN = 0, hfCache = { count:0, bytes:0 };
+const charts = {};
+
+// ---------- env loading ----------
+const drop = $('drop'), input = $('envFile');
+input.addEventListener('change', e => e.target.files[0] && loadEnv(e.target.files[0]));
+['dragover','dragenter'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('over'); }));
+['dragleave','drop'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('over'); }));
+drop.addEventListener('drop', e => e.dataTransfer.files[0] && loadEnv(e.dataTransfer.files[0]));
+
+function parseEnv(text) {
+  const out = {};
+  text.split(/\r?\n/).forEach(line => {
+    line = line.trim(); if (!line || line.startsWith('#')) return;
+    const i = line.indexOf('='); if (i < 1) return;
+    out[line.slice(0, i).replace(/^export\s+/, '').trim()] = line.slice(i + 1).trim().replace(/^["']|["']$/g, '');
+  });
+  return out;
+}
+const pickEnv = (env, pats) => { for (const p of pats) { const k = Object.keys(env).find(k => p.test(k)); if (k && env[k]) return env[k]; } return ''; };
+
+async function loadEnv(file) {
+  const env = parseEnv(await file.text());
+  const url = pickEnv(env, [/^SUPABASE_URL$/i, /SUPABASE.*URL/i]).replace(/\/+$/, '');
+  const key = pickEnv(env, [/SERVICE_ROLE/i, /SUPABASE.*KEY/i]);
+  const hf = pickEnv(env, [/^HF_TOKEN$/i, /HF.*TOKEN/i, /HUGGING/i]);
+  const missing = [!url && 'SUPABASE_URL', !key && 'SUPABASE_SERVICE_ROLE_KEY', !hf && 'HF_TOKEN'].filter(Boolean);
+  if (missing.length) return setStatus('Missing in .env: ' + missing.join(', '), 'error');
+  creds = { url, key, hf };
+  drop.style.display = 'none'; $('app').style.display = 'block';
+  await tick();
+  feedTick(); clearInterval(feedTimer); feedTimer = setInterval(feedTick, 5000);
+  clearInterval(timer);
+  timer = setInterval(() => { countdown--; if (countdown <= 0) { countdown = REFRESH; tick(); } else paintStatus(); }, 1000);
+}
+
+// ---------- data ----------
+async function sb(path, opts = {}) {
+  return fetch(creds.url + '/rest/v1/' + path, { ...opts, headers: { apikey: creds.key, Authorization: 'Bearer ' + creds.key, ...(opts.headers || {}) } });
+}
+async function tick() {
+  try {
+    const head = await sb('sandbox_events?select=event_id', { method: 'HEAD', headers: { Prefer: 'count=exact' } });
+    const cr = head.headers.get('content-range');
+    const live = cr ? parseInt(cr.split('/')[1]) || 0 : 0;
+
+    let res = await sb('sandbox_events?select=*&order=created_at.desc&limit=1000');
+    if (!res.ok) res = await sb('sandbox_events?select=*&limit=1000');
+    const rows = res.ok ? await res.json() : [];
+
+    if (tickN++ % 4 === 0) {
+      const H = { headers: { Authorization: 'Bearer ' + creds.hf } };
+      try { // exact archive row count from the backup script's metadata
+        const m = await fetch('https://huggingface.co/datasets/SURF-AIT/surf-sandbox-live/resolve/main/archive/_meta.json', H);
+        if (m.ok) { const j = await m.json(); const n = Number(j.row_count ?? j.rows ?? j.total_rows); if (Number.isFinite(n)) hfCache.rows = n; hfCache.metaOk = true; }
+        else hfCache.metaOk = false;
+      } catch (e) { hfCache.metaOk = false; }
+      try { // parquet sizes for the storage estimate
+        const r = await fetch('https://huggingface.co/api/datasets/SURF-AIT/surf-sandbox-live/tree/main/archive', H);
+        if (r.ok) { const f = (await r.json()).filter(x => x.path.endsWith('.parquet')); hfCache.count = f.length; hfCache.bytes = f.reduce((a, x) => a + (x.size || 0), 0); }
+      } catch (e) {}
+    }
+    if (dayN++ % 4 === 0) dailyTick();
+    const archived = hfCache.rows || 0;
+    history.push({ t: Date.now(), total: live + archived }); if (history.length > 40) history.shift();
+    render(live, archived, Array.isArray(rows) ? rows : []);
+    lastOk = Date.now(); setStatus('', 'success'); pulseRing();
+  } catch (err) { setStatus('Error: ' + err.message, 'error'); }
+}
+
+// ---------- analysis ----------
+const firstKey = (row, cands) => row ? cands.find(k => k in row) : undefined;
+function analyze(rows) {
+  const r0 = rows[0] || {};
+  const K = {
+    app: firstKey(r0, ['app_package','app','package']),
+    action: firstKey(r0, ['action']),
+    success: firstKey(r0, ['success']),
+    reason: firstKey(r0, ['reason','failure_reason','fail_reason','error']),
+    task: firstKey(r0, ['task_id','session_id','episode_id','run_id','task']),
+    steps: firstKey(r0, ['step','step_count','num_steps','steps']),
+    vision: firstKey(r0, ['used_vision','vision_used','vision_triggered','vision','is_vision']),
+    time: firstKey(r0, ['created_at','timestamp','inserted_at','ts','time'])
+  };
+  // per-app
+  const apps = {};
+  rows.forEach(r => { const a = r[K.app] ?? 'unknown'; (apps[a] ||= { total:0, ok:0 }).total++; if (r[K.success]) apps[a].ok++; });
+  const kill = Object.entries(apps).filter(([,v]) => v.total >= MIN_SAMPLE && v.ok / v.total < 0.5)
+    .map(([name,v]) => ({ name, pct: v.ok / v.total * 100, n: v.total })).sort((a,b) => a.pct - b.pct);
+  // vision
+  let vision = null;
+  if (K.vision) vision = rows.filter(r => r[K.vision] === true || r[K.vision] === 'true' || r[K.vision] === 1).length / (rows.length || 1) * 100;
+  else if (K.action && rows.some(r => /vision/i.test(String(r[K.action])))) vision = rows.filter(r => /vision/i.test(String(r[K.action]))).length / rows.length * 100;
+  // reasons
+  const reasons = {};
+  if (K.reason) rows.filter(r => !r[K.success] && r[K.reason]).forEach(r => { const k = String(r[K.reason]).slice(0, 40); reasons[k] = (reasons[k] || 0) + 1; });
+  // steps per task
+  let avgSteps = null;
+  if (K.task) {
+    const tasks = {};
+    rows.forEach(r => { const t = r[K.task]; if (t == null) return; const s = K.steps ? Number(r[K.steps]) || 0 : 1; tasks[t] = K.steps ? Math.max(tasks[t] || 0, s) : (tasks[t] || 0) + s; });
+    const v = Object.values(tasks); if (v.length) avgSteps = v.reduce((a,b) => a + b, 0) / v.length;
+  } else if (K.steps) { const v = rows.map(r => Number(r[K.steps])).filter(Number.isFinite); if (v.length) avgSteps = v.reduce((a,b) => a + b, 0) / v.length; }
+  // action dist
+  const actions = {}; rows.forEach(r => { const a = r[K.action] ?? 'unknown'; actions[a] = (actions[a] || 0) + 1; });
+  // rate (events/sec)
+  let rate = null, rateSrc = '';
+  if (K.time && rows.length > 5) {
+    const ts = rows.map(r => Date.parse(r[K.time])).filter(Number.isFinite);
+    const span = (Math.max(...ts) - Math.min(...ts)) / 1000;
+    if (span > 5) { rate = (ts.length - 1) / span; rateSrc = 'last ' + rows.length + ' events'; }
+  }
+  if (rate == null && history.length > 1) {
+    const a = history[0], b = history[history.length - 1], dt = (b.t - a.t) / 1000;
+    if (dt > 10) { rate = Math.max(0, (b.total - a.total) / dt); rateSrc = 'since page opened'; }
+  }
+  const okAll = rows.filter(r => r[K.success]).length;
+  return { K, apps, kill, vision, reasons, avgSteps, actions, rate, rateSrc, overall: rows.length ? okAll / rows.length * 100 : null, n: rows.length };
+}
+
+// ---------- render ----------
+const tweens = {};
+function countTo(id, val, fmt) {
+  const el = $(id), from = tweens[id] ?? 0; tweens[id] = val;
+  const t0 = performance.now();
+  (function step(t) { const p = Math.min(1, (t - t0) / 900), e = 1 - Math.pow(1 - p, 3); el.textContent = fmt(from + (val - from) * e); if (p < 1) requestAnimationFrame(step); })(t0);
+}
+const fmtInt = v => Math.round(v).toLocaleString();
+function fmtDur(secs) {
+  if (!isFinite(secs)) return '∞';
+  const d = secs / 86400, y = d / 365.25;
+  if (y >= 1000) return Math.round(y).toLocaleString() + ' yr';
+  if (y >= 1) return Math.floor(y) + ' yr ' + Math.round((y % 1) * 12) + ' mo';
+  if (d >= 30) return Math.round(d / 30.44) + ' mo';
+  if (d >= 1) return Math.round(d) + ' days';
+  return Math.max(1, Math.round(secs / 3600)) + ' hrs';
+}
+function fmtBytes(b) { const u = ['B','KB','MB','GB','TB','PB']; let i = 0; while (b >= 1000 && i < u.length - 1) { b /= 1000; i++; } return b.toFixed(b < 10 ? 2 : 1) + ' ' + u[i]; }
+
+function render(live, archived, rows) {
+  const total = live + archived, progress = total / GOAL * 100; window.lastTotal = total;
+  const A = analyze(rows);
+  countTo('totalCount', total, fmtInt); countTo('liveCount', live, fmtInt); countTo('archiveCount', archived, fmtInt);
+  $('goalProgress').textContent = progress.toFixed(6) + '%';
+  buildComb(progress);
+  window.beeN = window.setBeeCount(total);
+
+  // horizon
+  if (A.rate != null) {
+    $('rate').textContent = (A.rate >= 1 ? A.rate.toFixed(1) : A.rate.toFixed(3)) + '/s';
+    $('rateSub').textContent = fmtInt(A.rate * 86400) + ' per day · ' + A.rateSrc;
+    const secs = A.rate > 0 ? (GOAL - total) / A.rate : Infinity;
+    $('eta').textContent = fmtDur(secs); $('etaSub').textContent = A.rate > 0 ? 'at the current rate' : 'no ingestion detected';
+  } else { $('rate').textContent = '–'; $('rateSub').textContent = 'measuring…'; $('eta').textContent = '–'; $('etaSub').textContent = 'needs a few polls'; }
+  let bpe = 120, src = 'assumed';
+  if (hfCache.bytes > 0 && archived > 0) { bpe = hfCache.bytes / archived; src = 'from your HF parquet sizes'; }
+  $('size10b').textContent = fmtBytes(bpe * GOAL); $('sizeSub').textContent = bpe.toFixed(0) + ' B/event · ' + src;
+
+  // agent loop
+  $('vision').textContent = A.vision == null ? 'n/a' : A.vision.toFixed(1) + '%';
+  $('visionSub').textContent = A.vision == null ? 'add used_vision column' : 'of the last ' + A.n + ' events';
+  $('steps').textContent = A.avgSteps == null ? 'n/a' : A.avgSteps.toFixed(1);
+  $('stepsSub').textContent = A.avgSteps == null ? 'no task/step field found' : A.avgSteps > 15 ? 'inefficient' : A.avgSteps <= 3 ? 'ninja' : 'steps per task';
+  $('overall').textContent = A.overall == null ? 'n/a' : A.overall.toFixed(1) + '%';
+  $('overallSub').textContent = 'last ' + A.n + ' events';
+  $('overallHex').classList.toggle('bad', A.overall != null && A.overall < 50);
+
+  checkAlerts(A.kill);
+  // kill list
+  const kl = $('killList'); kl.innerHTML = ''; $('killCount').textContent = A.kill.length + ' failing';
+  if (!A.kill.length) { kl.innerHTML = '<div class="empty">No app under 50% (min ' + MIN_SAMPLE + ' events). The hive is healthy.</div>'; }
+  A.kill.slice(0, 12).forEach(k => {
+    const d = document.createElement('div'); d.className = 'kill-row';
+    d.innerHTML = '<span class="name"></span><div class="bar"><i style="width:' + Math.max(3, k.pct) + '%"></i></div><span class="pct">' + k.pct.toFixed(0) + '%</span><span class="n">n=' + k.n + '</span>';
+    d.querySelector('.name').textContent = k.name; d.title = 'Tap to filter the live feed'; d.onclick = () => setFilter(k.name); kl.appendChild(d);
+  });
+
+  // charts
+  const pal = ['#ffb800','#ff8a00','#ffd45e','#c96a00','#8a5a00','#e8c36a','#ff6b6b','#b3541e'];
+  const reasons = Object.entries(A.reasons).sort((a,b) => b[1] - a[1]).slice(0, 8);
+  let fl = reasons, flTitle = 'Failure reasons';
+  if (!A.K.reason) { // no failure_reason column yet: fall back to failures by action
+    const byAct = {}; rows.filter(r => !r[A.K.success]).forEach(r => { const k = r[A.K.action] ?? 'unknown'; byAct[k] = (byAct[k] || 0) + 1; });
+    fl = Object.entries(byAct).sort((a,b) => b[1] - a[1]).slice(0, 8); flTitle = 'Failures by action (add failure_reason for real causes)';
+  }
+  $('reasonChart').style.display = fl.length ? 'block' : 'none';
+  $('reasonEmpty').style.display = fl.length ? 'none' : 'block';
+  $('reasonEmpty').textContent = 'No failures in the last ' + A.n + ' events.';
+  draw('reasonChart', 'doughnut', fl.map(r => r[0]), fl.map(r => r[1]), pal, flTitle);
+  const topApps = Object.entries(A.apps).sort((a,b) => b[1].total - a[1].total).slice(0, 6);
+  draw('appChart', 'bar', topApps.map(a => a[0]), topApps.map(a => a[1].ok / a[1].total * 100), '#ffb800', 'App Success Rate (%)');
+  const acts = Object.entries(A.actions);
+  draw('actionChart', 'doughnut', acts.map(a => a[0]), acts.map(a => a[1]), pal, 'Action Distribution');
+
+  const m = Object.entries(A.K).map(([k,v]) => k + ':' + (v || '✗')).join('  ');
+  $('schema').textContent = 'Detected columns → ' + m;
+}
+
+function draw(id, type, labels, data, color, title) {
+  const tick = { color: '#c9a45a' };
+  const cfg = {
+    type, data: { labels, datasets: [{ data, backgroundColor: color, borderColor: '#1a1204' }] },
+    options: { responsive: true, animation: { duration: 700 },
+      plugins: { title: { display: true, text: title, color: '#fff3d6' }, legend: { display: type === 'doughnut', labels: { color: '#fff3d6' } } },
+      scales: type === 'bar' ? { x: { ticks: tick, grid: { display: false } }, y: { ticks: tick, grid: { color: '#3b2a0c' }, max: 100 } } : {} }
+  };
+  if (charts[id]) { charts[id].data = cfg.data; charts[id].update(); } else charts[id] = new Chart($(id), cfg);
+}
+
+function buildComb(progress) {
+  const rows = 7, per = 10, total = rows * per, filled = Math.floor(progress / 100 * total), comb = $('comb');
+  comb.innerHTML = ''; let n = 0;
+  for (let r = 0; r < rows; r++) {
+    const row = document.createElement('div'); row.className = 'comb-row' + (r % 2 ? ' off' : '');
+    for (let c = 0; c < per; c++, n++) { const cell = document.createElement('div'); cell.className = 'cell' + (n < filled ? ' full' : n === filled ? ' pulse' : ''); row.appendChild(cell); }
+    comb.appendChild(row);
+  }
+}
+
+function setStatus(msg, cls) { if (msg) $('statusText').textContent = msg; $('statusText').className = cls || ''; $('liveDot').classList.toggle('off', cls === 'error'); }
+function paintStatus() { if (!lastOk) return; const ago = Math.round((Date.now() - lastOk) / 1000); $('statusText').textContent = 'LIVE · updated ' + ago + 's ago · next sync in ' + countdown + 's · 🐝 ' + (window.beeN || 3) + ' bees' + (hfCache.metaOk === false ? ' · archive _meta.json unreachable' : ''); $('statusText').className = 'success'; }
+function pulseRing() { const r = document.createElement('div'); r.className = 'pulse-ring'; document.body.appendChild(r); setTimeout(() => r.remove(), 1500); countdown = REFRESH; paintStatus(); }
+
+// ---------- sound ----------
+let audioCtx = null, soundOn = true;
+try { soundOn = localStorage.getItem('hiveSound') !== 'off'; } catch (e) {}
+function ac() {
+  if (!audioCtx) { try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {} }
+  if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+  return audioCtx;
+}
+function toggleSound() {
+  soundOn = !soundOn; $('muteBtn').textContent = soundOn ? '🔊' : '🔇';
+  try { localStorage.setItem('hiveSound', soundOn ? 'on' : 'off'); } catch (e) {}
+  if (soundOn) { ac(); sound('ok'); }
+}
+function sound(kind) {
+  if (!soundOn) return;
+  const a = ac(); if (!a || a.state !== 'running') return;
+  const t = a.currentTime;
+  if (kind === 'ok') { // soft buzz
+    const o = a.createOscillator(), lfo = a.createOscillator(), lg = a.createGain(), f = a.createBiquadFilter(), g = a.createGain();
+    o.type = 'sawtooth'; o.frequency.value = 190; lfo.frequency.value = 38; lg.gain.value = 14; lfo.connect(lg); lg.connect(o.frequency);
+    f.type = 'lowpass'; f.frequency.value = 900; o.connect(f); f.connect(g); g.connect(a.destination);
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.06, t + 0.04); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.3);
+    o.start(t); lfo.start(t); o.stop(t + 0.32); lfo.stop(t + 0.32);
+  } else if (kind === 'bad') { // low thud
+    const o = a.createOscillator(), g = a.createGain();
+    o.type = 'sine'; o.frequency.setValueAtTime(110, t); o.frequency.exponentialRampToValueAtTime(40, t + 0.3); o.connect(g); g.connect(a.destination);
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.28, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.4);
+    o.start(t); o.stop(t + 0.42);
+  } else { // alarm: two beeps
+    [0, 0.24].forEach((d, i) => {
+      const o = a.createOscillator(), g = a.createGain();
+      o.type = 'square'; o.frequency.value = i ? 880 : 660; o.connect(g); g.connect(a.destination);
+      g.gain.setValueAtTime(0.0001, t + d); g.gain.exponentialRampToValueAtTime(0.07, t + d + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + d + 0.18);
+      o.start(t + d); o.stop(t + d + 0.2);
+    });
+  }
+}
+$('muteBtn').textContent = soundOn ? '🔊' : '🔇';
+
+// ---------- alerts ----------
+let prevKill = null;
+function checkAlerts(kill) {
+  if (prevKill) { const fresh = kill.filter(k => !prevKill.has(k.name)); if (fresh.length) alertApps(fresh); }
+  prevKill = new Set(kill.map(k => k.name));
+}
+function alertApps(list) {
+  document.body.classList.remove('alarm'); void document.body.offsetWidth; document.body.classList.add('alarm');
+  setTimeout(() => document.body.classList.remove('alarm'), 3400);
+  const t = document.createElement('div'); t.className = 'toast';
+  t.textContent = '⚠ ' + list.map(k => k.name + ' fell to ' + k.pct.toFixed(0) + '%').join(' · ') + ' (below 50% success)';
+  document.body.appendChild(t); setTimeout(() => t.remove(), 7000);
+  sound('alarm');
+  const kp = document.querySelector('.danger-panel'); if (kp) swarm(kp, false);
+}
+
+// ---------- daily pace ----------
+let dayN = 0;
+async function dailyTick() {
+  const DAYS = 14, start = new Date(); start.setHours(0, 0, 0, 0);
+  const days = [];
+  for (let i = DAYS - 1; i >= 0; i--) { const a = new Date(start); a.setDate(a.getDate() - i); const b = new Date(a); b.setDate(b.getDate() + 1); days.push([a, b]); }
+  try {
+    const counts = await Promise.all(days.map(async ([a, b]) => {
+      const r = await sb('sandbox_events?select=event_id&created_at=gte.' + encodeURIComponent(a.toISOString()) + '&created_at=lt.' + encodeURIComponent(b.toISOString()), { method: 'HEAD', headers: { Prefer: 'count=exact' } });
+      const cr = r.headers.get('content-range'); return cr ? parseInt(cr.split('/')[1]) || 0 : 0;
+    }));
+    const labels = days.map(([a]) => a.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }));
+    const last7 = counts.slice(-7), avg = last7.reduce((x, y) => x + y, 0) / last7.length;
+    const tick = { color: '#c9a45a' };
+    const cfg = { type: 'bar', data: { labels, datasets: [
+        { type: 'bar', label: 'Events/day', data: counts, backgroundColor: '#ffb800' },
+        { type: 'line', label: '7-day avg', data: counts.map(() => avg), borderColor: '#ff8a00', borderDash: [6, 4], pointRadius: 0 } ] },
+      options: { responsive: true, plugins: { title: { display: true, text: 'Supabase events per day (last 14 days)', color: '#fff3d6' }, legend: { labels: { color: '#fff3d6' } } },
+        scales: { x: { ticks: tick, grid: { display: false } }, y: { ticks: tick, grid: { color: '#3b2a0c' }, beginAtZero: true } } } };
+    if (charts.dayChart) { charts.dayChart.data = cfg.data; charts.dayChart.update(); } else charts.dayChart = new Chart($('dayChart'), cfg);
+    const need = (GOAL - (window.lastTotal || 0)) / 365;
+    $('paceSub').textContent = fmtInt(avg) + '/day (7d avg) · 10B in 1 year needs ' + fmtInt(need) + '/day' + (avg > 0 ? ' · ' + (need / avg).toFixed(0) + '× faster' : '');
+  } catch (e) {}
+}
+
+// ---------- live feed ----------
+let seen = new Set(), feedRows = [], feedFilter = null, feedFirst = true, feedTimer = null;
+const ago = iso => { const s = (Date.now() - Date.parse(iso)) / 1000; return isNaN(s) ? '' : s < 60 ? Math.max(0, Math.round(s)) + 's' : s < 3600 ? Math.round(s / 60) + 'm' : s < 86400 ? Math.round(s / 3600) + 'h' : Math.round(s / 86400) + 'd'; };
+
+async function feedTick() {
+  if (!creds) return;
+  try {
+    let res = await sb('sandbox_events?select=*&order=created_at.desc&limit=40');
+    if (!res.ok) res = await sb('sandbox_events?select=*&order=event_id.desc&limit=40');
+    if (!res.ok) return;
+    const rows = await res.json();
+    const fresh = feedFirst ? [] : rows.filter(r => !seen.has(r.event_id));
+    rows.forEach(r => seen.add(r.event_id));
+    feedRows = rows; feedFirst = false;
+    renderFeed(fresh.map(r => r.event_id));
+    fresh.slice(0, 5).forEach((r, i) => setTimeout(() => react(r), 250 + i * 400));
+  } catch (e) {}
+}
+function renderFeed(newIds = []) {
+  const box = $('feed'); box.innerHTML = '';
+  const rows = feedFilter ? feedRows.filter(r => r.app_package === feedFilter) : feedRows;
+  $('feedFilter').innerHTML = '';
+  if (feedFilter) { const c = document.createElement('button'); c.className = 'chip'; c.textContent = feedFilter + ' ✕'; c.onclick = () => { feedFilter = null; renderFeed(); }; $('feedFilter').appendChild(c); }
+  if (!rows.length) { box.innerHTML = '<div class="empty">No events to show.</div>'; return; }
+  rows.forEach(r => {
+    const d = document.createElement('div');
+    d.className = 'ev ' + (r.success ? 'ok' : 'bad') + (newIds.includes(r.event_id) ? ' new' : '');
+    d.dataset.id = r.event_id;
+    d.innerHTML = '<i></i><span class="a"></span><span class="p"></span><span class="s"></span><span class="t"></span>';
+    d.children[1].textContent = r.action ?? '?';
+    d.children[2].textContent = (r.app_package || '').split('.').slice(-2).join('.');
+    d.children[3].textContent = 'step ' + (r.step ?? '–');
+    d.children[4].textContent = ago(r.created_at);
+    d.onclick = e => { e.stopPropagation(); swarm(d, r.success); openModal(r); };
+    box.appendChild(d);
+  });
+}
+function swarm(el, ok) {
+  const b = el.getBoundingClientRect();
+  window.beeAttract = { x: b.left + b.width / 2, y: b.top + b.height / 2, until: performance.now() + 2500, c: ok ? '255,184,0' : '255,77,77' };
+}
+function react(r) {
+  sound(r.success ? 'ok' : 'bad');
+  const el = [...$('feed').children].find(x => x.dataset && x.dataset.id == r.event_id);
+  if (el) {
+    swarm(el, r.success);
+    const b = el.getBoundingClientRect(), s = document.createElement('div');
+    s.className = 'spark'; s.textContent = r.success ? '+1 ✓' : '✗ failed'; s.style.color = r.success ? '#3dff8a' : '#ff4d4d';
+    s.style.left = (b.left + 30) + 'px'; s.style.top = b.top + 'px'; document.body.appendChild(s); setTimeout(() => s.remove(), 1400);
+  }
+  const hex = $('totalCount').closest('.hex'); hex.classList.add('bump'); setTimeout(() => hex.classList.remove('bump'), 600);
+}
+function setFilter(app) { feedFilter = app; renderFeed(); $('feedPanel').scrollIntoView({ behavior: 'smooth', block: 'center' }); }
+function openModal(r) {
+  const b = $('modalBody'); b.innerHTML = '';
+  const h = document.createElement('h3'); h.textContent = (r.action ?? 'event') + (r.success ? ' ✓' : ' ✗'); b.appendChild(h);
+  const t = document.createElement('table');
+  Object.entries(r).forEach(([k, v]) => { const tr = t.insertRow(); tr.insertCell().textContent = k; tr.insertCell().textContent = v === null ? '–' : String(v); });
+  b.appendChild(t);
+  const sess = feedRows.filter(x => r.session_id != null && x.session_id === r.session_id).sort((a, c) => (a.step ?? 0) - (c.step ?? 0));
+  if (sess.length > 1) {
+    const s = document.createElement('div'); s.className = 'sess'; s.innerHTML = '<b>Session timeline</b><br>';
+    sess.forEach(x => { const p = document.createElement('span'); p.className = 'pill ' + (x.success ? 'ok' : 'bad'); p.textContent = (x.step ?? '?') + ' ' + (x.action ?? ''); p.onclick = () => openModal(x); s.appendChild(p); });
+    b.appendChild(s);
+  }
+  if (r.app_package) { const f = document.createElement('button'); f.className = 'chip'; f.textContent = 'Filter feed to ' + r.app_package; f.onclick = () => { closeModal(); setFilter(r.app_package); }; b.appendChild(f); }
+  $('modal').style.display = 'flex';
+}
+function closeModal() { $('modal').style.display = 'none'; }
+document.addEventListener('keydown', e => e.key === 'Escape' && closeModal());
+// tap anywhere: ripple + bees swarm to the tap
+document.addEventListener('pointerdown', e => {
+  ac();
+  if (e.target.closest('#modal,.drop,#muteBtn')) return;
+  window.beeAttract = { x: e.clientX, y: e.clientY, until: performance.now() + 1500, c: '255,184,0' };
+  const r = document.createElement('div'); r.className = 'tap'; r.style.left = e.clientX + 'px'; r.style.top = e.clientY + 'px'; document.body.appendChild(r); setTimeout(() => r.remove(), 800);
+});
+
+// ---------- living bees ----------
+(function bees() {
+  const cv = $('bees'), cx = cv.getContext('2d'); let W, H;
+  const resize = () => { W = cv.width = innerWidth; H = cv.height = innerHeight; }; resize(); addEventListener('resize', resize);
+  const mk = () => { const b = { x: Math.random() * W, y: Math.random() * H, s: 0.6 + Math.random() * 0.6, ph: Math.random() * 6, sp: 0.6 + Math.random() * 1.4, wob: 0.3 + Math.random() * 1.2 }; b.tx = Math.random() * W; b.ty = Math.random() * H; return b; };
+  const bees = Array.from({ length: 3 }, mk);
+  // bee count grows with progress on a log scale: 3 bees at 0 events, 60 at 10B
+  window.setBeeCount = total => { const n = Math.min(60, 3 + Math.floor(Math.log10(total + 1) / 10 * 57)); while (bees.length < n) bees.push(mk()); while (bees.length > n) bees.pop(); return n; };
+  (function frame(t) {
+    cx.clearRect(0, 0, W, H);
+    const at = window.beeAttract && window.beeAttract.until > performance.now() ? window.beeAttract : null;
+    if (at) { const g = cx.createRadialGradient(at.x, at.y, 0, at.x, at.y, 60); g.addColorStop(0, 'rgba(' + at.c + ',0.5)'); g.addColorStop(1, 'rgba(' + at.c + ',0)'); cx.fillStyle = g; cx.beginPath(); cx.arc(at.x, at.y, 60, 0, 6.3); cx.fill(); }
+    bees.forEach(b => {
+      if (at && Math.random() < 0.1) { b.tx = at.x + (Math.random() - 0.5) * 90; b.ty = at.y + (Math.random() - 0.5) * 90; b.sp = 2.4; } else if (!at && (Math.hypot(b.tx - b.x, b.ty - b.y) < 30 || Math.random() < 0.004)) { b.tx = Math.random() * W; b.ty = Math.random() * H; b.sp = 0.6 + Math.random() * 1.4; }
+      const a = Math.atan2(b.ty - b.y, b.tx - b.x);
+      b.x += Math.cos(a) * b.sp * b.s + Math.sin(t / 200 + b.ph) * b.wob + (Math.random() - 0.5) * 1.2;
+      b.y += Math.sin(a) * b.sp * b.s + Math.cos(t / 170 + b.ph) * b.wob + (Math.random() - 0.5) * 1.2;
+      cx.save(); cx.translate(b.x, b.y); cx.rotate(a); cx.scale(b.s, b.s);
+      const flap = Math.abs(Math.sin(t / 25 + b.ph));
+      cx.fillStyle = 'rgba(255,255,255,.35)';
+      cx.beginPath(); cx.ellipse(-2, -7, 6, 9 * flap + 2, 0.4, 0, 6.3); cx.ellipse(-2, 7, 6, 9 * flap + 2, -0.4, 0, 6.3); cx.fill();
+      cx.fillStyle = '#ffb800'; cx.beginPath(); cx.ellipse(0, 0, 10, 6, 0, 0, 6.3); cx.fill();
+      cx.fillStyle = '#1a1204'; cx.fillRect(-3, -5.5, 3, 11); cx.fillRect(3, -4.5, 3, 9);
+      cx.beginPath(); cx.arc(10, 0, 3.5, 0, 6.3); cx.fill();
+      cx.restore();
+    });
+    requestAnimationFrame(frame);
+  })(0);
+})();
+</script>
+</body>
+</html>
+
